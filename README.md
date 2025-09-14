@@ -9,8 +9,8 @@ Association-Optimized Collaborative Features](https://arxiv.org/abs/XXXXX) (Subm
 - **Framework**: Extends ByteTrack with novel enhancements for MOT tasks.
 - **Key Contributions**:
   1. **CSLFF**: A lightweight, channel-shared multi-scale feature fusion module in the YOLOX neck to improve detection feature representation.
-  2. **ScAIoU**: Integrated in `yolox/tracker/matching.py` to improve IoU-based matching with scale awareness.
-  3. **TPAM + SLM**: Added in `yolox/tracker/byte_tracker.py` for trajectory prediction and appearance-based re-matching, reducing identity switches.
+  2. **ScAIoU**: Integrated to improve IoU-based matching with scale awareness.
+  3. **TPAM + SLM**: Added for trajectory prediction and appearance-based re-matching, reducing identity switches.
 - **Performance**: Achieves MOTA of 80.7% on MOT17 and 78.1% on MOT20, with IDF1 improved by 2.3% compared to the baseline.
 
 ## Installation
@@ -23,8 +23,8 @@ Association-Optimized Collaborative Features](https://arxiv.org/abs/XXXXX) (Subm
 ### Installation Steps
 1. Clone the repository:
    ```bash
-   git clone https://github.com/yourusername/XXXXXX.git
-   cd Track-Enhanced
+   git clone https://github.com/AocfETrack.git
+   cd AocfETrack
    ```
 2. Install requirements:
    ```bash
@@ -66,7 +66,7 @@ Association-Optimized Collaborative Features](https://arxiv.org/abs/XXXXX) (Subm
    ```
 
 ## Training
-Train the enhanced ByteTrack model on MOT17 (half dataset) with the following command:
+Train the model on MOT17 (half dataset) with the following command:
 ```bash
 python3 tools/train.py -f exps/example/mot/yolox_x_mot17_half.py -d 8 -b 64 --fp16 -o -c pretrained/yolox_x.pth
 ```
@@ -113,15 +113,15 @@ python3 tools/track.py \
 ## Model Performance
 - **MOT17 (val_half)**: Initial MOTA ~0.2-0.4 (with optimization), target 80.7% with further tuning.
 - **MOT20**: Target 78.1% (requires full dataset training).
-- **Inference Speed**: ~20 FPS on a single GPU (V100 equivalent).
+
 
 ## Citation
 If you use this code in your research, please cite our paper:
 ```
 @article{zhang2025mot,
   title={Enhanced Multi-Object Tracking via Association-Optimized Collaborative Features}
-  author={ZZZZZZZ}
-  journal={arXiv preprint arXiv:XXXXX},
+  author={Shuo Cai,Zeyang Deng,Yuanzhi Tang}
+  journal={},
   year={2025}
 }
 ```
