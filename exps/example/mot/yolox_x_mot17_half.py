@@ -6,7 +6,15 @@ import torch.nn as nn
 import torch.distributed as dist
 
 from yolox.exp import Exp as MyExp
-from yolox.data import get_yolox_datadir
+from yolox.data import (
+    MOTDataset,
+    TrainTransform,
+    ValTransform,
+    YoloBatchSampler,
+    DataLoader,
+    InfiniteSampler,
+    MosaicDetection,
+)
 
 class Exp(MyExp):
     def __init__(self):
@@ -15,44 +23,35 @@ class Exp(MyExp):
         self.depth = 1.33
         self.width = 1.25
         self.exp_name = os.path.split(os.path.realpath(__file__))[1].split(".")[0]
-        self.train_ann = "train.json"
+        self.data_dir = "/home/xuyi/ByteTrack/datasets/MOT17"  # 修正数据路径
+        self.train_ann = "train_half.json"
         self.val_ann = "val_half.json"
+        self.test_ann = "test.json"  # 添加 test 数据支持
         self.input_size = (800, 1440)
         self.test_size = (800, 1440)
         self.random_size = (18, 32)
-        self.max_epoch = 80
+        self.max_epoch = 80  # 减少 epoch 加速开发
         self.print_interval = 20
         self.eval_interval = 5
         self.test_conf = 0.1
         self.nmsthre = 0.7
         self.no_aug_epochs = 10
-        self.basic_lr_per_img = 0.001 / 64.0
+        self.basic_lr_per_img = (0.001 / 64.0) * 4  # 调整为批次大小 16
         self.warmup_epochs = 1
 
     def get_data_loader(self, batch_size, is_distributed, no_aug=False):
-        from yolox.data import (
-            MOTDataset,
-            TrainTransform,
-            YoloBatchSampler,
-            DataLoader,
-            InfiniteSampler,
-            MosaicDetection,
-        )
-
-        dataset = MOTDataset(
-            data_dir=os.path.join(get_yolox_datadir(), "mot"),
-            json_file=self.train_ann,
-            name='train',
-            img_size=self.input_size,
-            preproc=TrainTransform(
-                rgb_means=(0.485, 0.456, 0.406),
-                std=(0.229, 0.224, 0.225),
-                max_labels=500,
-            ),
-        )
-
         dataset = MosaicDetection(
-            dataset,
+            MOTDataset(
+                data_dir=self.data_dir,
+                json_file=self.train_ann,
+                name='train',
+                img_size=self.input_size,
+                preproc=TrainTransform(
+                    rgb_means=(0.485, 0.456, 0.406),
+                    std=(0.229, 0.224, 0.225),
+                    max_labels=500,
+                ),
+            ),
             mosaic=not no_aug,
             img_size=self.input_size,
             preproc=TrainTransform(
@@ -68,15 +67,10 @@ class Exp(MyExp):
             enable_mixup=self.enable_mixup,
         )
 
-        self.dataset = dataset
-
         if is_distributed:
             batch_size = batch_size // dist.get_world_size()
 
-        sampler = InfiniteSampler(
-            len(self.dataset), seed=self.seed if self.seed else 0
-        )
-
+        sampler = InfiniteSampler(len(dataset), seed=self.seed if self.seed else 0)
         batch_sampler = YoloBatchSampler(
             sampler=sampler,
             batch_size=batch_size,
@@ -87,18 +81,17 @@ class Exp(MyExp):
 
         dataloader_kwargs = {"num_workers": self.data_num_workers, "pin_memory": True}
         dataloader_kwargs["batch_sampler"] = batch_sampler
-        train_loader = DataLoader(self.dataset, **dataloader_kwargs)
+        train_loader = DataLoader(dataset, **dataloader_kwargs)
 
         return train_loader
 
     def get_eval_loader(self, batch_size, is_distributed, testdev=False):
-        from yolox.data import MOTDataset, ValTransform
-
+        json_file = self.val_ann if not testdev else self.test_ann
         valdataset = MOTDataset(
-            data_dir=os.path.join(get_yolox_datadir(), "mot"),
-            json_file=self.val_ann,
+            data_dir=self.data_dir,
+            json_file=json_file,
             img_size=self.test_size,
-            name='train',
+            name='train' if not testdev else 'test',
             preproc=ValTransform(
                 rgb_means=(0.485, 0.456, 0.406),
                 std=(0.229, 0.224, 0.225),
@@ -107,9 +100,7 @@ class Exp(MyExp):
 
         if is_distributed:
             batch_size = batch_size // dist.get_world_size()
-            sampler = torch.utils.data.distributed.DistributedSampler(
-                valdataset, shuffle=False
-            )
+            sampler = torch.utils.data.distributed.DistributedSampler(valdataset, shuffle=False)
         else:
             sampler = torch.utils.data.SequentialSampler(valdataset)
 

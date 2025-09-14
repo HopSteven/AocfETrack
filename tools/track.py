@@ -105,19 +105,25 @@ def make_parser():
     parser.add_argument("--track_thresh", type=float, default=0.6, help="tracking confidence threshold")
     parser.add_argument("--track_buffer", type=int, default=30, help="the frames for keep lost tracks")
     parser.add_argument("--match_thresh", type=float, default=0.9, help="matching threshold for tracking")
-    parser.add_argument("--min-box-area", type=float, default=100, help='filter out tiny boxes')
+    parser.add_argument("--min_box_area", type=float, default=100, help='filter out tiny boxes')
     parser.add_argument("--mot20", dest="mot20", default=False, action="store_true", help="test mot20.")
     return parser
 
 
 def compare_dataframes(gts, ts):
-    accs = []
+    accs = []  # 初始化 accs 列表
     names = []
     for k, tsacc in ts.items():
-        if k in gts:            
+        if k in gts:
             logger.info('Comparing {}...'.format(k))
             accs.append(mm.utils.compare_to_groundtruth(gts[k], tsacc, 'iou', distth=0.5))
             names.append(k)
+        elif k == 'images' and len(gts) > 0:
+            # 强制映射 images 到所有 gt 序列
+            for seq_key in gts.keys():
+                logger.info('Mapping images to sequence {} for evaluation'.format(seq_key))
+                accs.append(mm.utils.compare_to_groundtruth(gts[seq_key], tsacc, 'iou', distth=0.5))
+                names.append(seq_key)
         else:
             logger.warning('No ground truth for {}, skipping.'.format(k))
 
@@ -221,14 +227,14 @@ def main(exp, args, num_gpu):
     mm.lap.default_solver = 'lap'
 
     if exp.val_ann == 'val_half.json':
-        gt_type = '_val_half'
+        gt_type = ''  # 直接匹配 gt.txt，无 _val_half
     else:
         gt_type = ''
     print('gt_type', gt_type)
     if args.mot20:
-        gtfiles = glob.glob(os.path.join('datasets/MOT20/train', '*/gt/gt{}.txt'.format(gt_type)))
+        gtfiles = glob.glob(os.path.join(exp.data_dir, 'MOT20/train', '*/gt/gt{}.txt'.format(gt_type)))
     else:
-        gtfiles = glob.glob(os.path.join('datasets/mot/train', '*/gt/gt{}.txt'.format(gt_type)))
+        gtfiles = glob.glob(os.path.join(exp.data_dir, 'images/train', '*/gt/gt.txt'))
     print('gt_files', gtfiles)
     tsfiles = [f for f in glob.glob(os.path.join(results_folder, '*.txt')) if not os.path.basename(f).startswith('eval')]
 
@@ -237,9 +243,45 @@ def main(exp, args, num_gpu):
     logger.info('Default LAP solver \'{}\''.format(mm.lap.default_solver))
     logger.info('Loading files.')
     
-    gt = OrderedDict([(Path(f).parts[-3], mm.io.loadtxt(f, fmt='mot15-2D', min_confidence=1)) for f in gtfiles])
-    ts = OrderedDict([(os.path.splitext(Path(f).parts[-1])[0], mm.io.loadtxt(f, fmt='mot15-2D', min_confidence=-1)) for f in tsfiles])    
-    
+    gt = OrderedDict()
+    for f in gtfiles:
+        seq_name = Path(f).parts[-3]  # e.g., MOT17-02-FRCNN
+        try:
+            # 保留 confidence=0，加载所有行
+            data = mm.io.loadtxt(f, fmt='mot15-2D', min_confidence=0)
+            if len(data) > 0:
+                gt[seq_name] = data
+                print(f"Loaded {seq_name}: {len(data)} entries")
+            else:
+                print(f"Empty data for {seq_name}")
+        except Exception as e:
+            print(f"Error loading {f}: {e}")
+
+    tsfiles = [f for f in glob.glob(os.path.join(results_folder, '*.txt')) if not os.path.basename(f).startswith('eval')]
+    ts = OrderedDict()
+    for f in tsfiles:
+        fname = os.path.splitext(os.path.basename(f))[0]
+        try:
+            data = mm.io.loadtxt(f, fmt='mot15-2D', min_confidence=-1)
+            if len(data) > 0:
+                ts[fname] = data
+                print(f"Loaded {fname} from {f}: {len(data)} entries")
+            else:
+                print(f"Empty data for {fname}")
+        except Exception as e:
+            print(f"Error loading {f}: {e}")
+
+    # 强制映射 images 到 gt 序列
+    accs = []  # 初始化 accs 列表
+    names = []
+    if 'images' in ts and len(gt) > 0:
+        for seq_key in gt.keys():
+            logger.info(f"Mapping 'images' to sequence '{seq_key}' for evaluation")
+            accs.append(mm.utils.compare_to_groundtruth(gt[seq_key], ts['images'], 'iou', distth=0.5))
+            names.append(seq_key)
+    else:
+        logger.warning("No valid mapping for test files.")
+
     mh = mm.metrics.create()    
     accs, names = compare_dataframes(gt, ts)
     
@@ -248,10 +290,6 @@ def main(exp, args, num_gpu):
                'partially_tracked', 'mostly_lost', 'num_false_positives', 'num_misses',
                'num_switches', 'num_fragmentations', 'mota', 'motp', 'num_objects']
     summary = mh.compute_many(accs, names=names, metrics=metrics, generate_overall=True)
-    # summary = mh.compute_many(accs, names=names, metrics=mm.metrics.motchallenge_metrics, generate_overall=True)
-    # print(mm.io.render_summary(
-    #   summary, formatters=mh.formatters, 
-    #   namemap=mm.io.motchallenge_metric_names))
     div_dict = {
         'num_objects': ['num_false_positives', 'num_misses', 'num_switches', 'num_fragmentations'],
         'num_unique_objects': ['mostly_tracked', 'partially_tracked', 'mostly_lost']}

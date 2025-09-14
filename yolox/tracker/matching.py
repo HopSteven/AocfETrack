@@ -72,7 +72,7 @@ def ious(atlbrs, btlbrs):
 
 def iou_distance(atracks, btracks):
     """
-    Compute cost based on IoU
+    Compute cost based on ScAIoU (Scale-Aware IoU)
     :type atracks: list[STrack]
     :type btracks: list[STrack]
 
@@ -86,7 +86,17 @@ def iou_distance(atracks, btracks):
         atlbrs = [track.tlbr for track in atracks]
         btlbrs = [track.tlbr for track in btracks]
     _ious = ious(atlbrs, btlbrs)
-    cost_matrix = 1 - _ious
+    
+    # ScAIoU: IoU * scale_factor
+    scaiou = np.zeros_like(_ious)
+    for i in range(len(atlbrs)):
+        for j in range(len(btlbrs)):
+            sb = (atlbrs[i][2] - atlbrs[i][0]) * (atlbrs[i][3] - atlbrs[i][1])  # Track area
+            sd = (btlbrs[j][2] - btlbrs[j][0]) * (btlbrs[j][3] - btlbrs[j][1])  # Det area
+            scale_factor = 2 * min(sb, sd) / (sb + sd + 1e-8)  # Scale constraint [0,1]
+            scaiou[i, j] = _ious[i, j] * scale_factor
+    
+    cost_matrix = 1 - scaiou
 
     return cost_matrix
 

@@ -155,6 +155,11 @@ class BYTETracker(object):
         self.buffer_size = int(frame_rate / 30.0 * args.track_buffer)
         self.max_time_lost = self.buffer_size
         self.kalman_filter = KalmanFilter()
+        
+        # TPAM + SLM params
+        self.history_len = 3  # TPAM: 历史帧数
+        self.track_histories = {}  # {track_id: deque of (x, y) positions}
+        self.slm_weight = 0.3  # SLM 辅助距离权重
 
     def update(self, output_results, img_info, img_size):
         self.frame_id += 1
@@ -204,7 +209,23 @@ class BYTETracker(object):
         strack_pool = joint_stracks(tracked_stracks, self.lost_stracks)
         # Predict the current location with KF
         STrack.multi_predict(strack_pool)
-        dists = matching.iou_distance(strack_pool, detections)
+        
+        # TPAM: Trajectory Prediction Assisted Matching (线性外推)
+        for track in strack_pool:
+            hist = self.track_histories.get(track.track_id, deque(maxlen=self.history_len))
+            if len(hist) >= 2:
+                # 线性外推: 用最近两帧速度预测
+                prev_pos = list(hist)[-2]
+                curr_pos = list(hist)[-1]
+                dx = curr_pos[0] - prev_pos[0]
+                dy = curr_pos[1] - prev_pos[1]
+                # 更新 Kalman 预测位置
+                track.mean[0] += dx
+                track.mean[1] += dy
+            # 更新历史 (x, y)
+            self.track_histories.setdefault(track.track_id, deque(maxlen=self.history_len)).append((track.mean[0], track.mean[1]))
+        
+        dists = matching.iou_distance(strack_pool, detections)  # 使用 ScAIoU
         if not self.args.mot20:
             dists = matching.fuse_score(dists, detections)
         matches, u_track, u_detection = matching.linear_assignment(dists, thresh=self.args.match_thresh)
@@ -272,6 +293,30 @@ class BYTETracker(object):
             if self.frame_id - track.end_frame > self.max_time_lost:
                 track.mark_removed()
                 removed_stracks.append(track)
+
+        # SLM: Appearance Learning Module (二次匹配未匹配轨迹)
+        if len(u_track) > 0 and len(detections) > 0:
+            unmatched_tracks = [strack_pool[i] for i in u_track if strack_pool[i].state == TrackState.Tracked]
+            unmatched_dets = [detections[j] for j in range(len(detections)) if j not in u_detection]  # 剩余检测
+            
+            if len(unmatched_tracks) > 0 and len(unmatched_dets) > 0:
+                # SLM: 用 bbox 坐标作为外观代理特征 (简化: [x,y,w,h] 向量)
+                track_feats = np.array([[t.tlwh[0], t.tlwh[1], t.tlwh[2], t.tlwh[3]] for t in unmatched_tracks])
+                det_feats = np.array([[d.tlwh[0], d.tlwh[1], d.tlwh[2], d.tlwh[3]] for d in unmatched_dets])
+                
+                # Cosine similarity
+                track_feats_norm = track_feats / (np.linalg.norm(track_feats, axis=1, keepdims=True) + 1e-8)
+                det_feats_norm = det_feats / (np.linalg.norm(det_feats, axis=1, keepdims=True) + 1e-8)
+                sim_matrix = np.dot(track_feats_norm, det_feats_norm.T)  # [N_track, N_det]
+                aux_dists = 1 - sim_matrix  # 距离 = 1 - sim
+                
+                # 联合 IoU + SLM (阈值 0.7)
+                iou_dists = matching.iou_distance(unmatched_tracks, unmatched_dets)
+                joint_dists = iou_dists * (1 - self.slm_weight) + aux_dists * self.slm_weight
+                matches_aux, _, _ = matching.linear_assignment(joint_dists, thresh=0.7)
+                for i, j in matches_aux:
+                    unmatched_tracks[i].update(unmatched_dets[j], self.frame_id)
+                    activated_starcks.append(unmatched_tracks[i])
 
         # print('Ramained match {} s'.format(t4-t3))
 
