@@ -23,9 +23,10 @@ Association-Optimized Collaborative Features](https://arxiv.org/abs/XXXXX) (Subm
 ### Installation Steps
 1. Clone the repository:
    ```bash
-   git clone https://github.com/AocfETrack.git
+   git clone https://github.com/HopSteven/AocfETrack.git
    cd AocfETrack
    ```
+   
 2. Install requirements:
    ```bash
    pip3 install -r requirements.txt
